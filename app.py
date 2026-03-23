@@ -1,4 +1,4 @@
-import shapely.geometry as geom
+from shapely.geometry import Polygon
 
 lots = []
 count = 0
@@ -6,27 +6,25 @@ count = 0
 for entity in msp:
     count += 1
 
-    # Limite sécurité
     if count > 10000:
         st.warning("DXF très lourd → analyse partielle")
         break
 
-    # Détection polyligne fermée
-    if entity.dxftype() in ["LWPOLYLINE", "POLYLINE"]:
+    if entity.dxftype() == "LWPOLYLINE":
         try:
-            points = entity.get_points()
-            coords = [(p[0], p[1]) for p in points]
+            coords = [(point[0], point[1]) for point in entity]
 
-            # Vérifie si fermé
-            if len(coords) > 3 and coords[0] == coords[-1]:
-                polygon = geom.Polygon(coords)
-                surface = round(polygon.area, 2)
+            if len(coords) > 3:
+                polygon = Polygon(coords)
 
-                lots.append({
-                    "lot": f"Lot_{len(lots)+1}",
-                    "surface": f"{surface} m²",
-                    "niveau": entity.dxf.layer
-                })
+                if polygon.is_valid:
+                    surface = round(polygon.area, 2)
 
-        except Exception:
-            continue
+                    lots.append({
+                        "lot": f"Lot_{len(lots)+1}",
+                        "surface": f"{surface} m²",
+                        "niveau": entity.dxf.layer
+                    })
+
+        except Exception as e:
+            st.write(f"Erreur polyligne : {e}")
