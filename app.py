@@ -1,3 +1,5 @@
+doc = ezdxf.readfile(tmp_path)
+msp = doc.modelspace()
 def polygon_area(coords):
     area = 0
     n = len(coords)
