@@ -1,20 +1,4 @@
-import streamlit as st
-import ezdxf
-import tempfile
-import pandas as pd
-import re
-from io import BytesIO
-import math
-
-st.set_page_config(page_title="LotSense Pro", layout="wide")
-st.title("🏢 LotSense Pro - DXF → Lots + EDD-RCP")
-
-# ==============================
-# 🔧 FONCTIONS UTILES
-# ==============================
-
 def polygon_area(coords):
-    """Calcul surface polygone (shoelace)"""
     area = 0
     n = len(coords)
     for i in range(n):
@@ -24,135 +8,86 @@ def polygon_area(coords):
     return abs(area) / 2
 
 def centroid(coords):
-    x = sum(p[0] for p in coords) / len(coords)
-    y = sum(p[1] for p in coords) / len(coords)
-    return (x, y)
+    return (
+        sum(p[0] for p in coords) / len(coords),
+        sum(p[1] for p in coords) / len(coords)
+    )
 
 def distance(p1, p2):
-    return math.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
+    return ((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)**0.5
 
-# ==============================
-# 📂 UPLOAD
-# ==============================
 
-uploaded_file = st.file_uploader("Upload ton plan DXF", type=["dxf"])
+polygons = []
+texts = []
 
-if uploaded_file:
-    st.success(f"Fichier chargé : {uploaded_file.name}")
-    st.info("Analyse en cours...")
+# 🔵 1. EXTRACTION
+for entity in msp:
 
-    try:
-        # Sauvegarde temporaire
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
-            tmp.write(uploaded_file.read())
-            tmp_path = tmp.name
+    if entity.dxftype() == "LWPOLYLINE":
+        coords = [(p[0], p[1]) for p in entity]
 
-        # Lecture DXF
-        doc = ezdxf.readfile(tmp_path)
-        msp = doc.modelspace()
+        if len(coords) > 3:
+            surface = polygon_area(coords)
 
-        st.info("Lecture des polylignes...")
-
-        polygons = []
-        texts = []
-
-        count = 0
-
-        for entity in msp:
-            count += 1
-            if count > 20000:
-                st.warning("DXF très lourd → analyse partielle")
-                break
-
-            # 🔵 POLYLIGNES = LOTS
-            if entity.dxftype() == "LWPOLYLINE":
-                coords = [(p[0], p[1]) for p in entity]
-                if len(coords) > 3:
-                    surface = polygon_area(coords)
-                    if surface > 1:  # filtre bruit
-                        polygons.append({
-                            "coords": coords,
-                            "centroid": centroid(coords),
-                            "surface": round(surface, 2),
-                            "layer": entity.dxf.layer
-                        })
-
-            # 🔵 TEXTES
-            if entity.dxftype() == "TEXT":
-                texts.append({
-                    "text": entity.dxf.text,
-                    "point": (entity.dxf.insert.x, entity.dxf.insert.y)
+            if surface > 1:
+                polygons.append({
+                    "coords": coords,
+                    "centroid": centroid(coords),
+                    "surface": round(surface, 2)
                 })
 
-        st.info(f"{len(polygons)} polygones détectés")
+    if entity.dxftype() == "TEXT":
+        texts.append({
+            "text": entity.dxf.text,
+            "point": (entity.dxf.insert.x, entity.dxf.insert.y)
+        })
 
-        # ==============================
-        # 🔗 ASSOCIATION TEXTE → LOT
-        # ==============================
 
-        lots = []
+# 🔵 2. IDENTIFICATION DES LOTS (numéro encerclé)
+lot_centers = []
 
-        for poly in polygons:
-            closest_text = None
-            min_dist = 999999
+for txt in texts:
+    if re.match(r"^\d+$", txt["text"].strip()):
+        lot_centers.append({
+            "lot": txt["text"],
+            "point": txt["point"]
+        })
 
-            for txt in texts:
-                d = distance(poly["centroid"], txt["point"])
-                if d < min_dist:
-                    min_dist = d
-                    closest_text = txt["text"]
 
-            # Extraction infos
-            lot_name = f"Lot_{len(lots)+1}"
-            surface_txt = "Non détectée"
+# 🔵 3. ASSOCIER PIÈCES → LOT
+lots = {}
 
-            if closest_text:
-                lot_match = re.search(r"[Ll]ot\s*\d+", closest_text)
-                if lot_match:
-                    lot_name = lot_match.group()
+for poly in polygons:
+    closest_lot = None
+    min_dist = 999999
 
-                surf_match = re.search(r"(\d+\.?\d*)\s*m²", closest_text)
-                if surf_match:
-                    surface_txt = surf_match.group()
+    for lc in lot_centers:
+        d = distance(poly["centroid"], lc["point"])
+        if d < min_dist:
+            min_dist = d
+            closest_lot = lc["lot"]
 
-            # Catégories simples
-            category = "Partie privée"
-            if any(k in (closest_text or "").lower() for k in ["hall","escalier","parking","terrasse"]):
-                category = "Partie commune spéciale"
+    if closest_lot:
+        if closest_lot not in lots:
+            lots[closest_lot] = {
+                "surface_totale": 0,
+                "pieces": []
+            }
 
-            lots.append({
-                "Lot": lot_name,
-                "Surface calculée": f"{poly['surface']} m²",
-                "Surface texte": surface_txt,
-                "Niveau": poly["layer"],
-                "Catégorie": category
-            })
+        lots[closest_lot]["surface_totale"] += poly["surface"]
+        lots[closest_lot]["pieces"].append(poly["surface"])
 
-        # ==============================
-        # 📊 AFFICHAGE
-        # ==============================
 
-        if lots:
-            df = pd.DataFrame(lots)
-            st.success(f"{len(df)} lots détectés")
-            st.dataframe(df)
+# 🔵 4. FORMAT FINAL
+result = []
 
-            # ==============================
-            # 📥 EXPORT EXCEL
-            # ==============================
+for lot_id, data in lots.items():
+    result.append({
+        "Lot": lot_id,
+        "Surface totale": round(data["surface_totale"], 2),
+        "Nb pièces": len(data["pieces"])
+    })
 
-            output = BytesIO()
-            df.to_excel(output, index=False)
 
-            st.download_button(
-                "📥 Télécharger Excel",
-                data=output,
-                file_name="lots.xlsx"
-            )
-
-        else:
-            st.error("Aucun lot détecté")
-
-    except Exception as e:
-        st.error("Erreur pendant l'analyse")
-        st.code(str(e))
+df = pd.DataFrame(result)
+st.dataframe(df)
