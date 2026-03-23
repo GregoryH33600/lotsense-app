@@ -21,5 +21,21 @@ if uploaded_file:
             if "Lot" in entity.dxf.text:
                 lots.append(entity.dxf.text)
 
-    st.write("Lots détectés :")
-    st.write(lots)
+import pandas as pd
+
+if lots:
+    df = pd.DataFrame(lots)
+    st.write("### Lots détectés")
+    st.table(df)
+
+import io
+
+if lots:
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    st.download_button(
+        label="📥 Télécharger Excel",
+        data=output,
+        file_name="lots_detectes.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
