@@ -13,7 +13,8 @@ st.title("🏢 LotSense Pro - DXF/DWG → EDD-RCP")
 uploaded_file = st.file_uploader("Upload DXF (DWG non converti à DXF)", type=["dxf"])
 if uploaded_file:
     st.success(f"Fichier chargé : {uploaded_file.name}")
-
+    st.info("Analyse du fichier en cours...")
+    
     # Sauvegarde temporaire
     with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
         tmp.write(uploaded_file.read())
