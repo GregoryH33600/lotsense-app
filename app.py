@@ -37,3 +37,15 @@ for poly in polygons:
         "surface": poly["surface"]
     })
     lots[closest_lot]["niveaux"].add(poly["layer"])
+
+for lot_id, data in lots.items():
+
+    st.markdown(f"## LOT {lot_id}")
+
+    st.write(f"Surface totale : {round(data['surface'],2)} m²")
+
+    st.write("Composition :")
+    for p in data["pieces"]:
+        st.write(f"- {p['nom']} : {p['surface']} m²")
+
+    st.write(f"Niveaux : {', '.join(data['niveaux'])}")
