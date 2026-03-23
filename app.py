@@ -3,79 +3,71 @@ import ezdxf
 import tempfile
 import pandas as pd
 import re
-from docx import Document
 from io import BytesIO
 
 st.set_page_config(page_title="LotSense Pro", layout="wide")
-st.title("🏢 LotSense Pro - DXF/DWG → EDD-RCP")
+st.title("🏢 LotSense Pro")
 
-# Upload
-uploaded_file = st.file_uploader("Upload DXF (DWG non converti à DXF)", type=["dxf"])
+uploaded_file = st.file_uploader("Upload DXF", type=["dxf"])
+
 if uploaded_file:
     st.success(f"Fichier chargé : {uploaded_file.name}")
-    st.info("Analyse du fichier en cours...")
-    
-    # Sauvegarde temporaire
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
+    st.info("Analyse en cours...")
 
-    # Lecture DXF
-    doc = ezdxf.readfile(tmp_path)
-    msp = doc.modelspace()
+    try:
+        # Sauvegarde fichier
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
+            tmp.write(uploaded_file.read())
+            tmp_path = tmp.name
 
-    lots = []
-    for entity in msp:
-        if entity.dxftype() == "TEXT":
-            text = entity.dxf.text
-            if "Lot" in text:
-                # surface détectée
-                surface_match = re.search(r"(\d+\.?\d*)\s*m²", text)
-                surface = surface_match.group(1)+" m²" if surface_match else "Non détectée"
-                # catégorie automatique partie commune
-                category = "Partie privée"
-                if any(k in text.lower() for k in ["hall", "escalier", "parking", "terrasse"]):
-                    category = "Partie commune spéciale"
-                lots.append({
-                    "lot": text.replace("Lot","").split()[0],
-                    "surface": surface,
-                    "niveau": "Inconnu",
-                    "catégorie": category
-                })
+        # Lecture DXF (sécurisée)
+        doc = ezdxf.readfile(tmp_path)
+        msp = doc.modelspace()
 
-    # Tableau affichage
-    if lots:
-        df = pd.DataFrame(lots)
-        st.write("### Lots détectés")
-        st.table(df)
+        st.info("DXF chargé, analyse des entités...")
 
-        # Export Excel
-        output_excel = BytesIO()
-        df.to_excel(output_excel, index=False)
-        st.download_button("📥 Télécharger Excel", data=output_excel,
-                           file_name="lots_detectes.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        lots = []
+        count = 0
 
-        # Génération EDD-RCP Word
-        docx_file = Document()
-        docx_file.add_heading('EDD-RCP Copropriété', 0)
-        docx_file.add_paragraph("Liste des lots et surfaces :")
-        table = docx_file.add_table(rows=1, cols=4)
-        hdr_cells = table.rows[0].cells
-        hdr_cells[0].text = 'Lot'
-        hdr_cells[1].text = 'Surface'
-        hdr_cells[2].text = 'Niveau'
-        hdr_cells[3].text = 'Catégorie'
-        for lot in lots:
-            row_cells = table.add_row().cells
-            row_cells[0].text = lot['lot']
-            row_cells[1].text = lot['surface']
-            row_cells[2].text = lot['niveau']
-            row_cells[3].text = lot['catégorie']
+        for entity in msp:
+            count += 1
 
-        # Export Word
-        output_docx = BytesIO()
-        docx_file.save(output_docx)
-        st.download_button("📥 Télécharger EDD-RCP Word", data=output_docx,
-                           file_name="EDD-RCP.docx",
-                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            # Sécurité : limite pour éviter blocage
+            if count > 5000:
+                st.warning("DXF très lourd → analyse partielle")
+                break
+
+            if entity.dxftype() == "TEXT":
+                text = entity.dxf.text
+
+                if "Lot" in text:
+                    surface_match = re.search(r"(\d+\.?\d*)\s*m²", text)
+                    surface = surface_match.group(1)+" m²" if surface_match else "Non détectée"
+
+                    lots.append({
+                        "lot": text.replace("Lot","").strip(),
+                        "surface": surface,
+                        "niveau": "Inconnu"
+                    })
+
+        st.success(f"Analyse terminée ({count} entités parcourues)")
+
+        if lots:
+            df = pd.DataFrame(lots)
+            st.write("### Résultat")
+            st.dataframe(df)
+
+            # Export Excel
+            output = BytesIO()
+            df.to_excel(output, index=False)
+            st.download_button(
+                "📥 Télécharger Excel",
+                data=output,
+                file_name="lots.xlsx"
+            )
+        else:
+            st.error("Aucun lot détecté ⚠️")
+
+    except Exception as e:
+        st.error("Erreur pendant l'analyse")
+        st.code(str(e))
