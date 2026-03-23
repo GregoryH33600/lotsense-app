@@ -1,73 +1,32 @@
-import streamlit as st
-import ezdxf
-import tempfile
-import pandas as pd
-import re
-from io import BytesIO
+import shapely.geometry as geom
 
-st.set_page_config(page_title="LotSense Pro", layout="wide")
-st.title("🏢 LotSense Pro")
+lots = []
+count = 0
 
-uploaded_file = st.file_uploader("Upload DXF", type=["dxf"])
+for entity in msp:
+    count += 1
 
-if uploaded_file:
-    st.success(f"Fichier chargé : {uploaded_file.name}")
-    st.info("Analyse en cours...")
+    # Limite sécurité
+    if count > 10000:
+        st.warning("DXF très lourd → analyse partielle")
+        break
 
-    try:
-        # Sauvegarde fichier
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
-            tmp.write(uploaded_file.read())
-            tmp_path = tmp.name
+    # Détection polyligne fermée
+    if entity.dxftype() in ["LWPOLYLINE", "POLYLINE"]:
+        try:
+            points = entity.get_points()
+            coords = [(p[0], p[1]) for p in points]
 
-        # Lecture DXF (sécurisée)
-        doc = ezdxf.readfile(tmp_path)
-        msp = doc.modelspace()
+            # Vérifie si fermé
+            if len(coords) > 3 and coords[0] == coords[-1]:
+                polygon = geom.Polygon(coords)
+                surface = round(polygon.area, 2)
 
-        st.info("DXF chargé, analyse des entités...")
+                lots.append({
+                    "lot": f"Lot_{len(lots)+1}",
+                    "surface": f"{surface} m²",
+                    "niveau": entity.dxf.layer
+                })
 
-        lots = []
-        count = 0
-
-        for entity in msp:
-            count += 1
-
-            # Sécurité : limite pour éviter blocage
-            if count > 5000:
-                st.warning("DXF très lourd → analyse partielle")
-                break
-
-            if entity.dxftype() == "TEXT":
-                text = entity.dxf.text
-
-                if "Lot" in text:
-                    surface_match = re.search(r"(\d+\.?\d*)\s*m²", text)
-                    surface = surface_match.group(1)+" m²" if surface_match else "Non détectée"
-
-                    lots.append({
-                        "lot": text.replace("Lot","").strip(),
-                        "surface": surface,
-                        "niveau": "Inconnu"
-                    })
-
-        st.success(f"Analyse terminée ({count} entités parcourues)")
-
-        if lots:
-            df = pd.DataFrame(lots)
-            st.write("### Résultat")
-            st.dataframe(df)
-
-            # Export Excel
-            output = BytesIO()
-            df.to_excel(output, index=False)
-            st.download_button(
-                "📥 Télécharger Excel",
-                data=output,
-                file_name="lots.xlsx"
-            )
-        else:
-            st.error("Aucun lot détecté ⚠️")
-
-    except Exception as e:
-        st.error("Erreur pendant l'analyse")
-        st.code(str(e))
+        except Exception:
+            continue
