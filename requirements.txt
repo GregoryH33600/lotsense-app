@@ -2,3 +2,4 @@ streamlit
 ezdxf
 pandas
 python-docx
+shapely==2.0.1
